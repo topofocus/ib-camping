@@ -9,7 +9,7 @@ module Ibo::Controllers
   class Index < R '/'
     def get
 
-      host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'beta' 
+      host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
       IB::Gateway.new( host: host, connect: true, client_id: 0, logger: Logger.new('ib-camping.log') ) unless IB::Gateway.current.present?  
       IB::Gateway.logger.level=1
       IB::Gateway.logger.formatter = proc do |severity, datetime, progname, msg|
