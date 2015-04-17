@@ -5,36 +5,52 @@ require 'yaml'
 
 Camping.goes :Ibo
 
+module Ibo::Helpers
+  def account_name account, fill_in=true 
+    if File.exists?( 'tws_alias.yml') 
+      YAML.load_file('tws_alias.yml')[:user][account.account] 
+    else 
+      fill_in ? @account.account : " "
+    end
+  end
+  def get_account account_id  # returns a account-object
+    ib = initialize_gw
+    ib.active_accounts.detect{|x| x.account == account_id }
+  end
+  def initialize_gw 
+    if IB::Gateway.current.nil?
+      host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
+      ib= IB::Gateway.new( host: host, connect: true, client_id: 0, logger: Logger.new('ib-camping.log') ) 
+      ib.logger.level=1
+      ib.logger.formatter = proc do |severity, datetime, progname, msg|
+	"#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
+      end
+      # request AccountData, PortfolioData and OpenPositions
+      ib.get_account_data
+      ib.update_orders;   sleep 1
+    end
+    IB::Gateway.current # return_value
+  end
+end
+
 module Ibo::Controllers
   class Index < R '/'
     def get
-
-      host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'beta' 
-      IB::Gateway.new( host: host, connect: true, client_id: 0, logger: Logger.new('ib-camping.log') ) unless IB::Gateway.current.present?  
-      IB::Gateway.logger.level=1
-      IB::Gateway.logger.formatter = proc do |severity, datetime, progname, msg|
-	               "#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
-	              end
-
-      IB::Gateway.current.get_account_data
-      IB::Gateway.current.send_message :RequestAllOpenOrders;   sleep 1
+      initialize_gw
       render :show_account
     end
   end
 
   class StatusX
     def get action
-	account_data = -> do
-	  IB::Gateway.current.get_account_data
-	  IB::Gateway.current.send_message :RequestAllOpenOrders
-	  sleep 1 
-	end
+      ib= initialize_gw  # make shure that everything is initialized
+      account_data = -> {ib.get_account_data; ib.update_orders;  sleep 1 }
 
       case action.split('/').first.to_sym
       when :disconnect
-	IB::Gateway.current.disconnect if IB::Gateway.tws.present?
+	ib.disconnect if ib.tws.present?
       when :connect
-	IB::Gateway.current.connect
+	ib.connect
 	account_data[]
       when :refresh
 	account_data[]
@@ -46,20 +62,19 @@ module Ibo::Controllers
 
   class SelectAccount # < R '/Status'
     def init_account_values	
-    account_value = ->(item) do 
-	  array = @account.simple_account_data_scan(item).map{|y| [y.value,y.currency] unless y.value.to_i.zero? }.compact 
-	  array.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
-	end
-	@account_values= {  'Cash' => account_value['TotalCashBalance'],
-	                    'FuturesPNL' => account_value['PNL'],
-	                    'FutureOptions' =>  account_value['FutureOption'],
-	                    'Options' =>  account_value['OptionMarket'],
-	                    'Stocks' =>  account_value['StockMarket'] }
+      account_value = ->(item) do 
+	array = @account.simple_account_data_scan(item).map{|y| [y.value,y.currency] unless y.value.to_i.zero? }.compact 
+	array.sort{ |a,b| b.last == 'BASE' ? 1 :  a.last  <=> b.last } # put base element in front
+      end
+      @account_values= {  'Cash' =>  account_value['TotalCashBalance'],
+                    'FuturesPNL' =>  account_value['PNL'],
+                 'FutureOptions' =>  account_value['FutureOption'],
+                       'Options' =>  account_value['OptionMarket'],
+                        'Stocks' =>  account_value['StockMarket'] }
     end
     def get action
-	@account = IB::Gateway.current.active_accounts.detect{|x| x.account == action.split('/').last }
-	init_account_values
-
+      @account = IB::Gateway.current.active_accounts.detect{|x| x.account == action.split('/').last }
+      init_account_values
       render :show_account
     end
 
@@ -72,30 +87,32 @@ module Ibo::Controllers
   end
 
   class ContractX # < R '/contract/(\d+)/select'
-    def get id
-
-    end
     def post account_id
-      @account = IB::Gateway.current.active_accounts.detect{|x| x.account == account_id }
-      if @input['symbol'].empty?
-	ii= @account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
-      else
-	@input['sec_type'] = @input['sec_type'].to_sym
-	ii = IB::Contract.new @input.reject{|x| x['predefined_contract'] }
-      end
-      result= ii.update_contract do | msg |
-	@account.contracts.update_or_create( @contract= msg.contract )
-      end
-      @message = result.is_a?( IB::Contract ) ? nil : result
-      @contract ||= IB::Stock.new
+      # if symbol is specified, search for the contract, otherwise use predefined contract
+      @account =get_account account_id 
+      @contract = if @input['symbol'].empty?
+		    @account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
+		  else
+		    @input['sec_type'] = @input['sec_type'].to_sym
+		    IB::Contract.build @input.reject{|x| x['predefined_contract'] }
+		  end
+      count= @contract.verify
+      @message = if count.zero? || @contract.nil? || @contract.con_id.zero?  
+		   @contract ||= IB::Stock.new
+		   "Not a valid contract, details in Log" 
+		 elsif count >1
+		   "Multible Contracts specified. The last of the List is used"
+		 else
+		   ""
+		 end
+      @account.contracts.update_or_create( @contract  ) unless count.zero?
       render  :contract_mask
-
     end
   end
 
     class OrderXN 
       def get account_id, local_id
-	account = IB::Gateway.current.active_accounts.detect{|x| x.account == account_id }
+	account = get_account account_id 
 	order = account.orders.detect{|x| x.local_id == local_id.to_i }
 	IB::Gateway.current.cancel_order order.local_id if order.is_a? IB::Order
 	 sleep 1 
@@ -103,14 +120,10 @@ module Ibo::Controllers
 	redirect Index
       end
       def post account_id, con_id
-      account = IB::Gateway.current.active_accounts.detect{|x| x.account == account_id }
+      account =  get_account account_id 
       contract= account.contracts.detect{|x| x.con_id == con_id.to_i }
-	puts @input.inspect
-	o = IB::Order.new @input
 	account.place_order order: IB::Order.new(@input), contract:contract
-	
 	redirect Index
-	
       end
     end
 
@@ -142,9 +155,10 @@ module Ibo::Views
       if @account.present? && @account.account_values.present? 
 	tr( class:  "lines") do
 
-	  td( colspan: 4) { @account.account }
+	  td( colspan: 1) { @account.account }
+	  td( colspan: 3) { account_name(@account, false) }
 	  td.number( colspan: 3){ "Last Update: #{@account.account_values.first.updated_at.strftime("%d.%m. %X")}"     } 
-		    _account_infos(@account)
+	  _account_infos(@account)
 	  if @account_values.present?
 	    @account_values.each{|y| _details(y) unless y.last.empty? }  #y ::["FuturesPNL", [["-255", "BASE"], ["-255", "EUR"]]]
 	  end
