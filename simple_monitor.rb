@@ -93,8 +93,10 @@ module Ibo::Controllers
       @contract = if @input['symbol'].empty?
 		    @account.contracts.detect{|x| x.con_id == @input['predefined_contract'].to_i }
 		  else
-		    @input['sec_type'] = @input['sec_type'].to_sym
-		    IB::Contract.build @input.reject{|x| x['predefined_contract'] }
+		    puts input.inspect
+		    @input[:right] = @input['right'][0].upcase if @input['sec_type']=='option'
+		    @input[:sec_type] = @input['sec_type'].to_sym
+		    IB::Contract.build @input.reject{|x| ['predefined_contract','right','sec_type'].include?(x) }
 		  end
       count= @contract.verify
       @message = if count.zero? || @contract.nil? || @contract.con_id.zero?  
@@ -220,8 +222,9 @@ module Ibo::Views
 	input_row['currency', @contract.con_id.present? ? " con-id : #{@contract.con_id}" : '' ]
 	input_row['exchange', @contract.contract_detail.present? ? @contract.contract_detail.long_name : '']
 	input_row['expiry', @contract.contract_detail.present? ? @contract.contract_detail.industry : '']
-	input_row['strike', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
-	input_row['multiply', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
+	input_row['right', @contract.contract_detail.present? ? @contract.contract_detail.category : '']
+	input_row['strike' ]
+	input_row['multiplier']
 	tr do
 	  td "Type"
 	  td do
