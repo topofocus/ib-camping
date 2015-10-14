@@ -20,16 +20,22 @@ module Ibo::Helpers
   def initialize_gw 
     if IB::Gateway.current.nil?
       host = File.exists?( 'tws_alias.yml') ?  YAML.load_file('tws_alias.yml')[:host] : 'localhost' 
-      ib= IB::Gateway.new( host: host, connect: true, client_id: 0, logger: Logger.new('ib-camping.log') ) 
-      ib.logger.level=1
-      ib.logger.formatter = proc do |severity, datetime, progname, msg|
+      gw= IB::Gateway.new( host: host, connect: true , client_id: 0, logger: Logger.new('ib-camping.log') ) 
+      gw.logger.level=1
+      gw.logger.formatter = proc do |severity, datetime, progname, msg|
 	"#{datetime.strftime("%d.%m.(%X)")}#{"%5s" % severity}->#{msg}\n"
       end
-      # request AccountData, PortfolioData and OpenPositions
-      ib.get_account_data
-      ib.update_orders;   sleep 1
+      gw.get_account_data
+      gw.update_orders 
     end
     IB::Gateway.current # return_value
+  end
+  def all_contracts *sort
+    sort = [ :sec_type ] if sort.empty?
+    sort.map!{ |x| x.is_a?(Symbol) ? x : x.to_sym  }
+    if IB::Gateway.current.present?
+	IB::Gateway.current.all_contracts.sort_by.sort_by{|x| sort.map{|s| x.send(s)} }
+    end
   end
 end
 
@@ -44,8 +50,10 @@ module Ibo::Controllers
   class StatusX
     def get action
       ib= initialize_gw  # make shure that everything is initialized
-      account_data = -> {ib.get_account_data; ib.update_orders;  sleep 1 }
+      account_data = -> {ib.get_account_data; ib.update_orders;  }
+      rendered = false
 
+      view_to_render = :show_account 
       case action.split('/').first.to_sym
       when :disconnect
 	ib.disconnect if ib.tws.present?
@@ -54,8 +62,12 @@ module Ibo::Controllers
 	account_data[]
       when :refresh
 	account_data[]
+      when :contracts
+	account_data[]
+	@accounts = ib.active_accounts
+	view_to_render = :show_contracts
       end
-      render :show_account
+	render view_to_render
     end
 
   end
@@ -144,11 +156,28 @@ module Ibo::Views
     html do
       head do
 	title { "IB-Camping-Simple-Trading-Desk" }
-	 link :rel => 'stylesheet', :type => 'text/css',
-	   :href => '/styles.css', :media => 'screen'
+	 link :rel => 'stylesheet', :type => 'text/css', :href => '/styles.css', :media => 'screen'
       end
       show_index
       body { self << yield }
+    end
+  end
+
+  def show_contracts
+    size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
+  
+    table do
+      tr do
+	td( colspan: 1) { "Contracts" }
+	@accounts.each{|a| td account_name(a) } if @accounts.present?
+      end
+      all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
+	tr do
+         td(colspan:1){ contract.to_human[1..-2] }
+	 @accounts.each{|a| td size[a,contract] } if @accounts.present?
+
+	end 
+      end
     end
   end
 
@@ -159,7 +188,7 @@ module Ibo::Views
 
 	  td( colspan: 1) { @account.account }
 	  td( colspan: 3) { account_name(@account, false) }
-	  td.number( colspan: 3){ "Last Update: #{@account.account_values.first.updated_at.strftime("%d.%m. %X")}"     } 
+	  td.number( colspan: 3){ "Last Update: #{@account.last_update.strftime("%d.%m. %X")}" } 
 	  _account_infos(@account)
 	  if @account_values.present?
 	    @account_values.each{|y| _details(y) unless y.last.empty? }  #y ::["FuturesPNL", [["-255", "BASE"], ["-255", "EUR"]]]
@@ -288,8 +317,10 @@ module Ibo::Views
 	  if status =='Connected'
 	    td 'Depot:'
 	    td { select( :name => 'account', :size => 1){
-			IB::Gateway.current.for_active_accounts{|x| option x.account } } }
+			IB::Gateway.current.for_active_accounts{|x| option( :value => x.account){ account_name(x) } } } }
 	    td { input :type => 'submit', :class => 'submit', :value => 'Select Account' }
+	    td { a 'Contracts', href: R(StatusX, :contracts) }
+
 	    td { a 'Refresh', href: R(StatusX, :refresh) }
 	    td { a 'Disconnect', href: R(StatusX, :disconnect) }
 	  else
