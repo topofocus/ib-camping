@@ -165,18 +165,34 @@ module Ibo::Views
 
   def show_contracts
     size = ->(a,c){v= a.portfolio_values.detect{|x| x.contract == c }; v.present? ? v.position : "" }
+      sleep 1  # wait for data to populate
   
     table do
-      tr do
-	td( colspan: 1) { "Contracts" }
+      tr.exited do
+	td { "Contracts" }
 	@accounts.each{|a| td account_name(a) } if @accounts.present?
       end
       all_contracts( :sec_type, :symbol, :expiry,:strike ).each do | contract |
 	tr do
-         td(colspan:1){ contract.to_human[1..-2] }
+         td contract.to_human[1..-2] 
 	 @accounts.each{|a| td size[a,contract] } if @accounts.present?
 
 	end 
+      end
+   # end
+   # table do
+	tr.exited do
+	  td( colspan: [@accounts.size+1,7].max){ 'Pending-Orders' }
+	end
+      @accounts.each do |a|
+	tr do
+	  if a.orders.present? 
+	    a.orders.each{|x| _order(x)} 
+	  else
+	      td account_name(a)
+	      td "No Pending Orders" 
+	  end
+	end
       end
     end
   end
