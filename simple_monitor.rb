@@ -182,7 +182,7 @@ module Ibo::Views
    # end
    # table do
 	tr.exited do
-	  td( colspan: [@accounts.size+1,7].max){ 'Pending-Orders' }
+	  td( colspan: [@accounts.size+1,7].max ){ 'Pending-Orders' }
 	end
       @accounts.each do |a|
 	tr do
@@ -190,7 +190,7 @@ module Ibo::Views
 	    a.orders.each{|x| _order(x)} 
 	  else
 	      td account_name(a)
-	      td(( colspan: @accounts.size){ "No Pending Orders" }
+	      td( colspan: @accounts.size ){ "No Pending Orders" }
 	  end
 	end
       end
