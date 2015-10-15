@@ -190,7 +190,7 @@ module Ibo::Views
 	    a.orders.each{|x| _order(x)} 
 	  else
 	      td account_name(a)
-	      td "No Pending Orders" 
+	      td(( colspan: @accounts.size){ "No Pending Orders" }
 	  end
 	end
       end
